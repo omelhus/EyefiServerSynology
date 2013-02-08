@@ -22,7 +22,7 @@
 import cgi
 import time
 from datetime import timedelta
-
+from datetime import datetime
 import sys
 import os
 import stat
@@ -663,7 +663,9 @@ class EyeFiRequestHandler(BaseHTTPRequestHandler):
 
         eyeFiLogger.debug("Extracting TAR file " + imageTarPath)
         imageTarfile = tarfile.open(imageTarPath)
-
+	imageJpgFile = ""
+        file_mode = stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO
+	imageGpxFile = ""
         for member in imageTarfile.getmembers():
             # If timezone is a daylight savings timezone, and we are
             # currently in daylight savings time, then use the altzone
@@ -675,21 +677,21 @@ class EyeFiRequestHandler(BaseHTTPRequestHandler):
             imageDate = datetime.fromtimestamp(member.mtime) - timedelta(hours=timezone)
             uploadDir = imageDate.strftime(self.server.config.get('EyeFiServer','upload_dir'))
             eyeFiLogger.debug("Creating folder " + uploadDir)
-            file_mode = stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO;
             if not os.path.isdir(uploadDir):
                 os.makedirs(uploadDir)
                 if uid != 0 and gid != 0:
                     os.chown(uploadDir, uid, gid)
                 if file_mode != "":
                     os.chmod(uploadDir, stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
-                os.system("synoindex -A '%s'" % uploadDir)
 	    
             f=imageTarfile.extract(member, uploadDir)
             imagePath = os.path.join(uploadDir, member.name)
             if member.name.lower().endswith(".jpg") :
-            	os.system("synoindex -U '%s'" % imagePath)
+            	eyeFiLogger.debug("Found jpeg: %s" % imagePath)
+            	imageJpgFile = imagePath
             eyeFiLogger.debug("imagePath " + imagePath)
-            os.utime(imagePath, (member.mtime + timeoffset, member.mtime + timeoffset))
+            filetime = member.mtime + timeoffset
+            os.utime(imagePath, (filetime, filetime))
             if uid != 0 and gid != 0:
                 os.chown(imagePath, uid, gid)
             if file_mode != "":
@@ -703,18 +705,33 @@ class EyeFiRequestHandler(BaseHTTPRequestHandler):
                     aps = self.getphotoaps(shottime, aps)
                     loc = self.getlocation(aps)
                     if loc['status']=='OK' and float(loc['accuracy'])<=geotag_accuracy:
-                        xmpName="."+imageName+".xmp"
+                        xmpName="."+imageName+".gpx"
                         xmpPath=os.path.join(uploadDir, xmpName)
                         eyeFiLogger.debug("Writing XMP file " + xmpPath)
-                        self.writexmp(xmpPath,float(loc['location']['lat']),float(loc['location']['lng']))
+                        ##self.writexmp(xmpPath,float(loc['location']['lat']),float(loc['location']['lng']))
+                        # Adding 1 second to filetime as a workaround for bug in exiftool
+                        self.writegpx(xmpPath,float(loc['location']['lat']),float(loc['location']['lng']), time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(filetime+1)))
+                        imageGpxFile = xmpPath
                         if uid != 0 and gid != 0:
                             os.chown(xmpPath, uid, gid)
                         if file_mode != "":
                             os.chmod(xmpPath, file_mode)
-                except:
+                except Exception, e:
+                    eyeFiLogger.error(e)
                     eyeFiLogger.error("Error processing LOG file " + imagePath)
                 os.remove(imagePath)
 
+	if len(imageJpgFile) > 0 and len(imageGpxFile) > 0 :
+		exifcommand = "exiftool '{0}' -overwrite_original -geotag '{1}'".format(imageJpgFile, imageGpxFile)
+		eyeFiLogger.debug("Applying gps info: " + exifcommand)
+		os.system(exifcommand)
+		if uid != 0 and gid != 0:                                                                                                                       
+                	os.chown(imageJpgFile, uid, gid)                                                                                                                 
+                if file_mode != "":                                                                                                                             
+                	os.chmod(imageJpgFile, file_mode) 
+		
+        os.system("synoindex -A '%s'" % uploadDir)
+        os.system("synoindex -U '%s'" % imageJpgFile)
         eyeFiLogger.debug("Closing TAR file " + imageTarPath)
         imageTarfile.close()
 
@@ -826,6 +843,11 @@ class EyeFiRequestHandler(BaseHTTPRequestHandler):
         FILE = open(name,"w")
         FILE.write("<?xpacket begin='\xef\xbb\xbf' id='W5M0MpCehiHzreSzNTczkc9d'?>\n<x:xmpmeta xmlns:x='adobe:ns:meta/' x:xmptk='EyeFiServer'>\n<rdf:RDF xmlns:rdf='http://www.w3.org/1999/02/22-rdf-syntax-ns#'>\n<rdf:Description rdf:about='' xmlns:exif='http://ns.adobe.com/exif/1.0/'>\n<exif:GPSLatitude>"+latitude+"</exif:GPSLatitude>\n<exif:GPSLongitude>"+longitude+"</exif:GPSLongitude>\n<exif:GPSVersionID>2.2.0.0</exif:GPSVersionID>\n</rdf:Description>\n</rdf:RDF>\n</x:xmpmeta>\n<?xpacket end='w'?>\n")
         FILE.close()
+
+    def writegpx(self, name, latitude, longitude, date):
+    	with open(name, "w") as FILE :
+    		gpxformat = "<?xml version=\"1.0\"?>\n<gpx\n version=\"1.0\"\n xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"\n xmlns=\"http://www.topografix.com/GPX/1/0\"\n xsi:schemaLocation=\"http://www.topografix.com/GPX/1/0 http://www.topografix.com/GPX/1/0/gpx.xsd\">\n<time>{2}</time>\n<wpt lat=\"{0}\" lon=\"{1}\">\n <time>{2}</time>\n</wpt>\n</gpx>"
+    		FILE.write(gpxformat.format(latitude, longitude, date))
 
     def getPhotoStatus(self,postData):
         handler = EyeFiContentHandler()
