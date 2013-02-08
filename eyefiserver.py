@@ -25,6 +25,7 @@ from datetime import timedelta
 
 import sys
 import os
+import stat
 import socket
 import thread
 import StringIO
@@ -643,8 +644,9 @@ class EyeFiRequestHandler(BaseHTTPRequestHandler):
         if geotag_enable:
             geotag_accuracy = int(self.server.config.get('EyeFiServer','geotag_accuracy'))
 
-        tempDir = os.path.dirname(self.server.config.get('EyeFiServer','upload_dir'))
-
+        tempDir = os.path.dirname(time.strftime(self.server.config.get('EyeFiServer','upload_dir')))
+	if not os.path.exists(tempDir) :
+		os.makedirs(tempDir)
 
         imageTarPath = os.path.join(tempDir, imageTarfileName)
         eyeFiLogger.debug("Generated path " + imageTarPath)
@@ -673,12 +675,13 @@ class EyeFiRequestHandler(BaseHTTPRequestHandler):
             imageDate = datetime.fromtimestamp(member.mtime) - timedelta(hours=timezone)
             uploadDir = imageDate.strftime(self.server.config.get('EyeFiServer','upload_dir'))
             eyeFiLogger.debug("Creating folder " + uploadDir)
+            file_mode = stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO;
             if not os.path.isdir(uploadDir):
                 os.makedirs(uploadDir)
                 if uid != 0 and gid != 0:
                     os.chown(uploadDir, uid, gid)
                 if file_mode != "":
-                    os.chmod(uploadDir, int(dir_mode))
+                    os.chmod(uploadDir, stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
 
             f=imageTarfile.extract(member, uploadDir)
             imagePath = os.path.join(uploadDir, member.name)
@@ -687,7 +690,7 @@ class EyeFiRequestHandler(BaseHTTPRequestHandler):
             if uid != 0 and gid != 0:
                 os.chown(imagePath, uid, gid)
             if file_mode != "":
-                os.chmod(imagePath, int(file_mode))
+                os.chmod(imagePath, file_mode)
 
             if geotag_enable>0 and member.name.lower().endswith(".log"):
                 eyeFiLogger.debug("Processing LOG file " + imagePath)
@@ -697,16 +700,17 @@ class EyeFiRequestHandler(BaseHTTPRequestHandler):
                     aps = self.getphotoaps(shottime, aps)
                     loc = self.getlocation(aps)
                     if loc['status']=='OK' and float(loc['accuracy'])<=geotag_accuracy:
-                        xmpName=imageName+".xmp"
+                        xmpName="."+imageName+".xmp"
                         xmpPath=os.path.join(uploadDir, xmpName)
                         eyeFiLogger.debug("Writing XMP file " + xmpPath)
                         self.writexmp(xmpPath,float(loc['location']['lat']),float(loc['location']['lng']))
                         if uid != 0 and gid != 0:
                             os.chown(xmpPath, uid, gid)
                         if file_mode != "":
-                            os.chmod(xmpPath, int(file_mode))
+                            os.chmod(xmpPath, file_mode)
                 except:
                     eyeFiLogger.error("Error processing LOG file " + imagePath)
+                os.remove(imagePath)
 
         eyeFiLogger.debug("Closing TAR file " + imageTarPath)
         imageTarfile.close()
