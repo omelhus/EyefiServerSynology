@@ -682,9 +682,12 @@ class EyeFiRequestHandler(BaseHTTPRequestHandler):
                     os.chown(uploadDir, uid, gid)
                 if file_mode != "":
                     os.chmod(uploadDir, stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
-
+                os.system("synoindex -A '%s'" % uploadDir)
+	    
             f=imageTarfile.extract(member, uploadDir)
             imagePath = os.path.join(uploadDir, member.name)
+            if member.name.lower().endswith(".jpg") :
+            	os.system("synoindex -U '%s'" % imagePath)
             eyeFiLogger.debug("imagePath " + imagePath)
             os.utime(imagePath, (member.mtime + timeoffset, member.mtime + timeoffset))
             if uid != 0 and gid != 0:
